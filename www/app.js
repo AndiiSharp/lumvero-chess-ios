@@ -6,7 +6,10 @@ const Cap = window.Capacitor;
 const native = !!(Cap && Cap.isNativePlatform && Cap.isNativePlatform());
 const plug = (n) => (native && Cap.registerPlugin ? Cap.registerPlugin(n) : null);
 const Haptics = plug('Haptics'), Share = plug('Share'), Clip = plug('Clipboard'), FS = plug('Filesystem'), Keep = plug('KeepAwake'), CapApp = plug('App');
-const VERSION = '1.0.1';
+const VERSION = '1.0.2';
+// ---- Neue Texte (Update 1.0.2) ----
+Object.assign(STR.en, { act_hint: 'Hint', act_undo: 'Take back', hint_thinking: 'Looking for a good move…', hint_none: 'No hint available.', eval_btn: 'Evaluate position', eval_text: 'Evaluation: %1$s (from White’s view)', eval_mate: 'mate in %1$d', stats_title: 'Statistics', stats_games: 'Finished games: %1$d', stats_vs: 'Against the computer', stats_two: 'Two players on this device', stats_level: 'Level %1$d', stats_wdl: 'Won %1$d · Draw %2$d · Lost %3$d', stats_empty: 'No finished games yet.', board_ocean: 'Ocean', board_rose: 'Rose', undo_none: 'Nothing to take back.' });
+Object.assign(STR.de, { act_hint: 'Tipp', act_undo: 'Zurücknehmen', hint_thinking: 'Suche einen guten Zug …', hint_none: 'Kein Tipp verfügbar.', eval_btn: 'Stellung bewerten', eval_text: 'Bewertung: %1$s (aus Sicht von Weiß)', eval_mate: 'Matt in %1$d', stats_title: 'Statistik', stats_games: 'Beendete Partien: %1$d', stats_vs: 'Gegen den Computer', stats_two: 'Zwei Spieler an diesem Gerät', stats_level: 'Stufe %1$d', stats_wdl: 'Gewonnen %1$d · Remis %2$d · Verloren %3$d', stats_empty: 'Noch keine beendeten Partien.', board_ocean: 'Ozean', board_rose: 'Rosé', undo_none: 'Nichts zum Zurücknehmen.' });
 const SOURCE_URL = 'https://github.com/AndiiSharp/lumvero-chess-ios';
 const $ = (s, r = document) => r.querySelector(s);
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -32,7 +35,7 @@ function t(k, ...a) {
 }
 
 // ---------- Design ----------
-const BOARDS = { classic: ['#EEE8D2', '#5F7F4E'], slate: ['#E4E8EC', '#5A7085'], warm: ['#EDDFC4', '#93683F'], contrast: ['#FFFFFF', '#3D6A99'] };
+const BOARDS = { classic: ['#EEE8D2', '#5F7F4E'], slate: ['#E4E8EC', '#5A7085'], warm: ['#EDDFC4', '#93683F'], contrast: ['#FFFFFF', '#3D6A99'], ocean: ['#DEE9F2', '#4F7CA0'], rose: ['#F3E1E1', '#B5656A'] };
 function applyLook() {
   const dark = S.theme === 'dark' || (S.theme === 'system' && matchMedia('(prefers-color-scheme: dark)').matches);
   document.documentElement.dataset.theme = dark ? 'dark' : 'light';
@@ -99,7 +102,9 @@ const Engine = {
   start() {
     if (this.w) return this.ready;
     this.w = new Worker('engine/stockfish.js');
-    this.w.onmessage = (e) => { const line = String(e.data); if (this.wait && line.startsWith(this.wait.tok)) { const r = this.wait; this.wait = null; r.res(line); } };
+    this.w.onmessage = (e) => { const line = String(e.data);
+      const sc = / score (cp|mate) (-?\d+)/.exec(line); if (sc) this.lastScore = { kind: sc[1], v: +sc[2] };
+      if (this.wait && line.startsWith(this.wait.tok)) { const r = this.wait; this.wait = null; r.res(line); } };
     this.w.onerror = () => { if (this.wait) { const r = this.wait; this.wait = null; r.rej(new Error('engine')); } };
     this.ready = (async () => {
       this.send('uci'); await this.expect('uciok', 15000);
@@ -111,15 +116,18 @@ const Engine = {
   },
   send(c) { this.w.postMessage(c); },
   expect(tok, ms) { return new Promise((res, rej) => { const to = setTimeout(() => { this.wait = null; rej(new Error('timeout')); }, ms); this.wait = { tok, res: (l) => { clearTimeout(to); res(l); }, rej }; }); },
-  async best(g) {
+  async best(g, o = {}) {
     await this.start();
-    const [skill, ms] = LEVELS[g.level] || LEVELS[2];
+    let [skill, ms] = LEVELS[g.level] || LEVELS[2];
+    if (o.skill != null) skill = o.skill; if (o.ms != null) ms = o.ms;
+    const mvList = o.upto != null ? g.moves.slice(0, o.upto) : g.moves;
+    this.lastScore = null;
     const c960 = g.v !== 'classical';
     if (this.opts.c960 !== c960) { this.send('setoption name UCI_Chess960 value ' + c960); this.opts.c960 = c960; }
     if (this.opts.skill !== skill) { this.send('setoption name Skill Level value ' + skill); this.opts.skill = skill; }
     if (this.opts.game !== g.id) { this.send('ucinewgame'); this.opts.game = g.id; }
     this.send('isready'); await this.expect('readyok', 10000);
-    this.send('position fen ' + g.startFen + (g.moves.length ? ' moves ' + g.moves.map((u) => engineUci(g, u)).join(' ') : ''));
+    this.send('position fen ' + g.startFen + (mvList.length ? ' moves ' + mvList.map((u) => engineUci(g, u)).join(' ') : ''));
     this.send('go movetime ' + ms);
     let line;
     try { line = await this.expect('bestmove', ms + 3000); } catch (e) { this.send('stop'); line = await this.expect('bestmove', 1000); }
@@ -187,7 +195,7 @@ function play(uci, opts = {}) {
   const capture = p.board.get(mv.to) && p.board.get(mv.to).color !== p.turn || /x/.test(san);
   if (G.clock) { stopClockForMove(mover); if (G.moves.length >= 1 || mover === 'b') G.clock[mover] += G.inc * 1000; }
   G.moves.push(CO.makeUci(mv)); G.sans.push(san); G.offered = null;
-  ui.sel = null; ui.pending = null;
+  ui.sel = null; ui.pending = null; ui.hint = null;
   const q = pos();
   G.turnStart = G.clock ? Date.now() : null;
   // Spielende?
@@ -335,7 +343,7 @@ function resumeGame() { G.paused = false; G.turnStart = G.clock ? Date.now() : n
 function render() {
   applyLook();
   const a = $('#app');
-  const fn = { home: vHome, setup: vSetup, game: vGame, archive: vArchive, replay: vReplay, rules: vRules, settings: vSettings, info: vInfo, licenses: vLicenses }[screen] || vHome;
+  const fn = { home: vHome, setup: vSetup, game: vGame, archive: vArchive, replay: vReplay, rules: vRules, settings: vSettings, info: vInfo, licenses: vLicenses, stats: vStats }[screen] || vHome;
   a.innerHTML = fn(); bind();
 }
 const backBtn = (to = 'home') => `<button class="back" data-go="${to}">← ${t('back')}</button>`;
@@ -344,6 +352,7 @@ function vHome() {
     <button class="btn filled" data-act="play">${t('home_play')}</button>
     ${running() ? `<button class="btn filled" data-act="continue">${t('home_continue')}</button>` : ''}
     <button class="btn outline" data-go="archive">${t('home_archive')}</button>
+    <button class="btn outline" data-go="stats">${t('stats_title')}</button>
     <button class="btn outline" data-go="rules">${t('home_rules')}</button>
     <button class="btn outline" data-go="settings">${t('home_settings')}</button>
     <div class="foot"><button class="btn text" data-go="info">${t('home_info')}</button><p class="small">${t('home_version', VERSION)}</p></div></div>`;
@@ -372,7 +381,7 @@ function playerName(c) { return G.opp === 'cpu' ? (c === G.human ? t('player_you
 function pbar(c, p) {
   const act = running() && sideOf(p) === c;
   const name = `${playerName(c)} · ${colorName(c)}`;
-  return `<div class="pbar ${act ? 'act' : ''}" aria-label="${esc(act ? t('player_to_move', name) : name)}">${act ? '▶ ' : '&nbsp;&nbsp;&nbsp;'}<span class="n">${esc(name)}</span>${G.clock ? `<span class="clk ${clockNow(c) < 10000 ? 'low' : ''}" data-clk="${c}">${fmtClock(clockNow(c))}</span>` : ''}</div>`;
+  return `<div class="pbar ${act ? 'act' : ''}" aria-label="${esc(act ? t('player_to_move', name) : name)}">${act ? '▶ ' : '&nbsp;&nbsp;&nbsp;'}<span class="n">${esc(name)} <span class="cap">${capturedHtml(c, p)}</span></span>${G.clock ? `<span class="clk ${clockNow(c) < 10000 ? 'low' : ''}" data-clk="${c}">${fmtClock(clockNow(c))}</span>` : ''}</div>`;
 }
 function boardHtml(p, bottom, opts = {}) {
   const sel = opts.sel, tg = opts.targets || [], last = opts.last, pend = opts.pending;
@@ -383,7 +392,7 @@ function boardHtml(p, bottom, opts = {}) {
   for (let r = 7; r >= 0; r--) for (let f = 0; f < 8; f++) {
     const rank = bottom === 'w' ? r : 7 - r, file = bottom === 'w' ? f : 7 - f, sq = rank * 8 + file;
     const pc = shown.board.get(sq);
-    const isLast = last && (last.from === sq || last.to === sq);
+    const isLast = (last && (last.from === sq || last.to === sq)) || (opts.hint && (opts.hint.from === sq || opts.hint.to === sq));
     const cls = ['sq', (rank + file) % 2 === 0 ? 'd' : '', isLast ? 'last' : '', sel === sq ? 'sel' : '', chkSq === sq ? 'chk' : ''].join(' ');
     const isT = tg.includes(sq);
     h += `<div class="${cls}" data-sq="${sq}">`;
@@ -415,14 +424,14 @@ function vGame() {
   const castle = running() && G.v !== 'classical' && isHumanTurn(p) && !ui.thinking ? castleMoves(p) : null;
   const top = other(bottom);
   return `<div class="game"><div class="ghead">${esc(label)}</div>${pbar(top, p)}
-    <div class="bwrap">${boardHtml(p, bottom, { sel: ui.sel, targets: tg, last, pending: ui.pending })}</div>
+    <div class="bwrap">${boardHtml(p, bottom, { sel: ui.sel, targets: tg, last: ui.hint ? null : last, hint: ui.hint, pending: ui.pending })}</div>
     ${pbar(bottom, p)}
     <div class="status" aria-live="polite">${esc(status)}</div>
     ${ui.pending ? `<div class="confirm"><button class="btn outline" data-act="cancelpend">${t('back')}</button><button class="btn filled" data-act="confirm">${t('action_confirm_move')}</button></div>` : ''}
     ${castle ? `<div class="castle"><button class="btn outline" ${castle.k ? '' : 'disabled style="opacity:.4"'} data-castle="k" aria-label="${t('castle_kingside_desc')}">${t('castle_kingside')}</button><button class="btn outline" ${castle.q ? '' : 'disabled style="opacity:.4"'} data-castle="q" aria-label="${t('castle_queenside_desc')}">${t('castle_queenside')}</button></div>` : ''}
     <div class="mline"><span class="l">${esc(ml)}</span><button data-act="moves">${ui.showMoves ? t('moves_hide') : t('moves_show')}</button></div>
     ${list ? `<div class="mlist">${list}</div>` : ''}
-    <div class="gbtns">${running() ? `<button class="btn outline" data-act="pause">${t('action_pause')}</button>` : ''}<button class="btn outline" data-act="flip">${t('action_flip')}</button><button class="btn outline" data-act="more">${t('action_more')}</button></div>
+    ${running() && isHumanTurn(p) && !ui.thinking && !G.paused ? `<div class="gbtns"><button class="btn outline" data-act="hint">💡 ${t('act_hint')}</button><button class="btn outline" data-act="undo">↶ ${t('act_undo')}</button></div>` : ''}<div class="gbtns">${running() ? `<button class="btn outline" data-act="pause">${t('action_pause')}</button>` : ''}<button class="btn outline" data-act="flip">${t('action_flip')}</button><button class="btn outline" data-act="more">${t('action_more')}</button></div>
     ${G.paused && running() ? '' : ''}</div>`;
 }
 function vArchive() {
@@ -451,6 +460,7 @@ function vReplay() {
     <div class="gbtns"><button class="btn outline" data-rp="first" aria-label="${t('replay_first')}">⏮</button><button class="btn outline" data-rp="prev" aria-label="${t('replay_prev')}">◀</button>
     <button class="btn outline" data-rp="next" aria-label="${t('replay_next')}">▶</button><button class="btn outline" data-rp="last" aria-label="${t('replay_last')}">⏭</button></div>
     <div class="gbtns"><button class="btn outline" data-ex="share">${t('export_share_pgn')}</button><button class="btn outline" data-ex="save">${t('export_save_pgn')}</button><button class="btn outline" data-ex="fen">${t('export_copy_fen')}</button></div>
+    <div class="gbtns"><button class="btn outline" data-act="eval">${t('eval_btn')}</button></div><p class="status" id="evalout"></p>
     <p class="small" style="padding:0 8px">${t('replay_note')}</p></div>`;
 }
 const RULES = ['goal', 'pieces', 'check', 'stalemate', 'promotion', 'castling', 'ep', '960', '960castle', 'clock', 'levels', 'buttons'];
@@ -461,7 +471,7 @@ function vSettings() {
   return `<div class="page">${backBtn()}<h1>${t('settings_title')}</h1>
     <h2>${t('group_display')}</h2><h3>${t('setting_theme')}</h3>
     ${radio(S.theme === 'system', t('theme_system'), 'data-set2="theme:system"')}${radio(S.theme === 'light', t('theme_light'), 'data-set2="theme:light"')}${radio(S.theme === 'dark', t('theme_dark'), 'data-set2="theme:dark"')}
-    <h3>${t('setting_board')}</h3><div class="thumbs">${th('classic', t('board_classic'))}${th('slate', t('board_slate'))}${th('warm', t('board_warm'))}${th('contrast', t('board_contrast'))}</div>
+    <h3>${t('setting_board')}</h3><div class="thumbs">${th('classic', t('board_classic'))}${th('slate', t('board_slate'))}${th('warm', t('board_warm'))}${th('contrast', t('board_contrast'))}${th('ocean', t('board_ocean'))}${th('rose', t('board_rose'))}</div>
     <h3>${t('setting_pieces')}</h3><div class="thumbs">${ps('classic', t('pieces_classic'))}${ps('modern', t('pieces_modern'))}</div>
     ${sw(S.coords, t('setting_coordinates'), '', 'coords')}${sw(S.lastMove, t('setting_last_move'), '', 'lastMove')}
     <h2>${t('group_controls')}</h2>
@@ -509,6 +519,9 @@ function bind() {
   act('continue', continueGame);
   act('start', () => { newGame(setup); startGame(); });
   act('moves', () => { ui.showMoves = !ui.showMoves; render(); });
+  act('hint', showHint);
+  act('undo', takeBack);
+  act('eval', evalReplay);
   act('flip', () => { ui.flip = !ui.flip; render(); });
   act('pause', () => { pauseGame(); dialog(t('resume_title'), t('resume_text'), [[t('resume_action'), resumeGame]], { dismiss: false }); });
   act('more', moreMenu);
@@ -619,3 +632,50 @@ try { if (G && (!G.startFen || !Array.isArray(G.moves))) throw new Error('bad');
 catch (e) { G = null; LS.del('game'); setTimeout(() => dialog(t('load_error_title'), t('load_error_text'), [[t('hint960_ok'), null]]), 50); }
 render();
 Engine.start().catch(() => {});
+
+// ---------- Update 1.0.2 ----------
+const VALUE = { pawn: 1, knight: 3, bishop: 3, rook: 5, queen: 9, king: 0 };
+function capturedHtml(c, p) { // Figuren, die Farbe c geschlagen hat, + Materialvorsprung
+  const start = posFrom(G.startFen); const count = (pos2, col) => { const m = {}; for (const r of Object.keys(VALUE)) m[r] = 0; for (const sq of pos2.board[col]) m[pos2.board.get(sq).role]++; return m; };
+  const opp = c === 'w' ? 'black' : 'white', me = c === 'w' ? 'white' : 'black';
+  const s0 = count(start, opp), s1 = count(p, opp); let html = '', mat = 0;
+  for (const r of ['queen', 'rook', 'bishop', 'knight', 'pawn']) { const k = Math.max(0, s0[r] - s1[r]); for (let i = 0; i < k; i++) html += `<img src="${pieceImg(opp, r)}" alt="" style="width:14px;height:14px;vertical-align:-2px;margin-left:-3px">`; }
+  const val = (m) => Object.entries(m).reduce((a, [r, k]) => a + VALUE[r] * k, 0);
+  mat = val(count(p, me)) - val(s1);
+  return html + (mat > 0 ? ` <small>+${mat}</small>` : '');
+}
+async function showHint() {
+  const p = pos(); if (!running() || !isHumanTurn(p)) return;
+  snack(t('hint_thinking'));
+  try { const b = await Engine.best(G, { skill: 20, ms: 900 }); if (!b) { snack(t('hint_none')); return; }
+    const mv = CO.normalizeMove(p, CO.parseUci(b)); let to = mv.to; const pc = p.board.get(mv.from);
+    if (G.v === 'classical' && pc && pc.role === 'king' && p.board.get(to) && p.board.get(to).role === 'rook' && p.board.get(to).color === pc.color) to = CO.squareFile(to) === 7 ? to - 1 : to + 2;
+    ui.hint = { from: mv.from, to }; ui.sel = mv.from; buzz(); render();
+  } catch (e) { Engine.reset(); snack(t('hint_none')); }
+}
+function takeBack() {
+  if (!running() || !G.moves.length) { snack(t('undo_none')); return; }
+  let k = 1; if (G.opp === 'cpu') { k = sideOf(pos()) === G.human ? 2 : 1; }
+  k = Math.min(k, G.moves.length);
+  G.moves.splice(-k); G.sans.splice(-k); ui.sel = null; ui.hint = null; ui.pending = null;
+  if (G.clock) G.turnStart = Date.now();
+  saveG(); render(); if (G.opp === 'cpu' && sideOf(pos()) !== G.human) maybeEngine();
+}
+async function evalReplay() {
+  const el = $('#evalout'); if (!el) return; el.textContent = '…';
+  try { await Engine.best(replayG, { skill: 20, ms: 1200, upto: replayPly }); const sc = Engine.lastScore; if (!sc) { el.textContent = '–'; return; }
+    const whiteToMove = sideOf(replay(replayG, replayPly)) === 'w'; const v = whiteToMove ? sc.v : -sc.v;
+    el.textContent = t('eval_text', sc.kind === 'mate' ? t('eval_mate', Math.abs(v)) + (v < 0 ? ' (−)' : ' (+)') : (v >= 0 ? '+' : '−') + (Math.abs(v) / 100).toFixed(2));
+  } catch (e) { Engine.reset(); el.textContent = '–'; }
+}
+function vStats() {
+  const arch = LS.get('archive', []);
+  if (!arch.length) return `<div class="page">${backBtn()}<h1>${t('stats_title')}</h1><p>${t('stats_empty')}</p></div>`;
+  const cpu = arch.filter((g) => g.opp === 'cpu'), two = arch.filter((g) => g.opp === 'two');
+  const wdl = (list) => { let w = 0, d = 0, l = 0; list.forEach((g) => { if (!g.result.winner) d++; else if (g.result.winner === g.human) w++; else l++; }); return t('stats_wdl', w, d, l); };
+  let h = `<div class="page">${backBtn()}<h1>${t('stats_title')}</h1><p>${t('stats_games', arch.length)}</p><h3>${t('stats_vs')}</h3><p>${wdl(cpu)}</p>`;
+  for (let L = 1; L <= 5; L++) { const g = cpu.filter((x) => x.level === L); if (g.length) h += `<p class="small">${t('stats_level', L)}: ${wdl(g)}</p>`; }
+  const ww = two.filter((g) => g.result.winner === 'w').length, bw = two.filter((g) => g.result.winner === 'b').length, dd = two.length - ww - bw;
+  h += `<h3>${t('stats_two')}</h3><p>${t('result_white_wins')}: ${ww} · ${t('result_black_wins')}: ${bw} · ${t('result_draw')}: ${dd}</p></div>`;
+  return h;
+}
