@@ -1,0 +1,37 @@
+// WebKit-Test (iPhone-Emulation): Start, Setup, Partie gegen Computer, Zug + Engine-Antwort, Chess960, Einstellungen.
+import { createRequire } from 'node:module';
+import http from 'node:http';
+import fs from 'node:fs';
+import path from 'node:path';
+const require = createRequire('C:/Users/Andrej/projekte/test1/boardgames/tools/webkit-test/package.json');
+const { webkit } = require('playwright');
+const root = path.resolve('www'); const out = path.resolve(process.argv[2] || 'tools/shots'); fs.mkdirSync(out, { recursive: true });
+const T = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.png': 'image/png', '.wav': 'audio/wav', '.wasm': 'application/wasm' };
+const srv = http.createServer((q, r) => { let p = decodeURIComponent(new URL(q.url, 'http://x').pathname); if (p === '/') p = '/index.html'; const f = path.join(root, p);
+  if (!fs.existsSync(f)) { r.writeHead(404); r.end(); return; } r.writeHead(200, { 'content-type': T[path.extname(f)] || 'application/octet-stream' }); fs.createReadStream(f).pipe(r); });
+await new Promise((r) => srv.listen(8801, '127.0.0.1', r));
+const br = await webkit.launch();
+const ctx = await br.newContext({ viewport: { width: 393, height: 852 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true, locale: process.argv[3] || 'en-US' });
+const pg = await ctx.newPage(); const errs = [];
+pg.on('pageerror', (e) => errs.push('JS: ' + e.message)); pg.on('console', (m) => { if (m.type() === 'error') errs.push('console: ' + m.text()); });
+const shot = (n) => pg.screenshot({ path: path.join(out, n + '.png') });
+const tapSq = async (sq) => { const el = pg.locator(`[data-sq="${sq}"]`); const b = await el.boundingBox(); await pg.mouse.click(b.x + b.width / 2, b.y + b.height / 2); await pg.waitForTimeout(250); };
+const sq = (s) => (s.charCodeAt(0) - 97) + 8 * (+s[1] - 1);
+await pg.goto('http://127.0.0.1:8801/'); await pg.waitForTimeout(800); await shot('01-home');
+await pg.click('[data-act=play]'); await pg.waitForTimeout(300); await shot('02-setup');
+await pg.click('[data-act=start]'); await pg.waitForTimeout(800); await shot('03-game');
+await tapSq(sq('e2')); await shot('04-selected'); await tapSq(sq('e4'));
+await pg.waitForFunction(() => JSON.parse(localStorage.getItem('lc.game')).moves.length >= 2, null, { timeout: 20000 }).catch(() => errs.push('Engine hat nicht geantwortet'));
+await pg.waitForTimeout(400); await shot('05-after-engine');
+const g = await pg.evaluate(() => JSON.parse(localStorage.getItem('lc.game')));
+console.log('Zuege:', g.sans.join(' '));
+await pg.click('[data-act=more]'); await pg.waitForTimeout(300); await shot('06-menu');
+await pg.mouse.click(10, 10); await pg.waitForTimeout(200);
+// Chess960 zu zweit
+await pg.evaluate(() => { localStorage.setItem('lc.setup', JSON.stringify({ v: '960', opp: 'two', color: 'w', level: 2, time: 5, inc: 2 })); localStorage.removeItem('lc.game'); localStorage.setItem('lc.hint960', 'true'); });
+await pg.goto('http://127.0.0.1:8801/'); await pg.waitForTimeout(500); await pg.click('[data-act=play]'); await pg.waitForTimeout(200); await shot('07-setup960'); await pg.click('[data-act=start]'); await pg.waitForTimeout(800); await shot('08-game960');
+await pg.goto('http://127.0.0.1:8801/'); await pg.waitForTimeout(400); await pg.click('[data-go=settings]'); await pg.waitForTimeout(300); await shot('09-settings');
+await pg.click('[data-go=home]'); await pg.click('[data-go=rules]'); await pg.waitForTimeout(300); await shot('10-rules');
+await pg.click('[data-go=home]'); await pg.click('[data-go=info]'); await pg.waitForTimeout(300); await shot('11-info');
+await br.close(); srv.close();
+console.log(errs.length ? 'FEHLER:\n' + errs.join('\n') : 'Keine JS-Fehler');
