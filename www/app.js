@@ -380,7 +380,7 @@ function vSetup() {
 function playerName(c) { return G.opp === 'cpu' ? (c === G.human ? t('player_you') : t('player_computer_level', G.level)) : null; }
 function pbar(c, p) {
   const act = running() && sideOf(p) === c;
-  const name = `${playerName(c)} · ${colorName(c)}`;
+  const name = playerName(c) ? `${playerName(c)} · ${colorName(c)}` : colorName(c);
   return `<div class="pbar ${act ? 'act' : ''}" aria-label="${esc(act ? t('player_to_move', name) : name)}">${act ? '▶ ' : '&nbsp;&nbsp;&nbsp;'}<span class="n">${esc(name)} <span class="cap">${capturedHtml(c, p)}</span></span>${G.clock ? `<span class="clk ${clockNow(c) < 10000 ? 'low' : ''}" data-clk="${c}">${fmtClock(clockNow(c))}</span>` : ''}</div>`;
 }
 function boardHtml(p, bottom, opts = {}) {
