@@ -1,1 +1,1 @@
-{"appId":"com.lumvero.chess","appName":"Lumvero Chess","webDir":"www","backgroundColor":"#F7F8FA","ios":{"contentInset":"never","scrollEnabled":true,"webContentsDebuggingEnabled":false,"backgroundColor":"#F7F8FA"}}
+{"appId":"com.lumvero.chess","appName":"Lumvero Chess","webDir":"www","backgroundColor":"#F7F8FA","ios":{"contentInset":"never","scrollEnabled":true,"webContentsDebuggingEnabled":false,"backgroundColor":"#F7F8FA"},"android":{"allowMixedContent":false,"webContentsDebuggingEnabled":false}}
